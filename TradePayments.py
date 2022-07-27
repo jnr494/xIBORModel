@@ -22,6 +22,11 @@ class TradePayments():
     def add_payment(self, paytime, payment, fixtime=None,indextenor='6M',leg=0):
         self.payments.append(TradePayment(paytime,payment,fixtime,leg))    
     
+    def insert_variables(self):
+        for idx, payment in enumerate(self.payments):
+            for variable_name, variable_value in self.variables.items():
+                self.payments[idx] = payment._replace(payment = payment.payment.replace(variable_name,str(variable_value)))
+    
     def print_variables(self):
         print('Variables:')
         for variable_name, variable_value in self.variables.items():

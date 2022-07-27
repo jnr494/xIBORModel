@@ -8,6 +8,7 @@ Created on Sat Jul 16 23:20:03 2022
 import numpy as np
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
+import copy
 
 from HelperFunctions import (tenorstring_to_year, get_zcb_rate_from_zcb_price)
 import TradePayments
@@ -17,13 +18,14 @@ import TradePayments
 class LinearRateModel:
     
     def __init__(self):
-        self.parameters = {'SPOTRATES':np.array([[1,0.02]])}
-        self.model_data = {'CALIBINSTRUMENTS':(['swap 0B 2y','swap 0B 3y','swap 0B 4y','swap 0B 5y','swap 0B 10y'],[0.01652,0.02019,0.02319,0.02577,0.03395])}
+        self.parameters = {'FORWARDRATES':np.array([[1,0.02]])}
+        self.model_data = {'CALIBINSTRUMENTS':(['swap 0B 3y','swap 0B 4y','swap 0B 5y','swap 0B 10y'],
+                                               [0.01652,0.02019,0.02319,0.02577,0.03395])}
         self.model_settings = {'FORWARDCOVERAGE':'6M'}
 
     def get_forward_rate(self, tenor): 
         tenor_year = tenorstring_to_year(tenor)
-        spot_rate = np.interp(tenor_year, self.parameters['SPOTRATES'][:,0], self.parameters['SPOTRATES'][:,1])
+        spot_rate = np.interp(tenor_year, self.parameters['FORWARDRATES'][:,0], self.parameters['FORWARDRATES'][:,1])
         return spot_rate
     
     def get_zcb_rate(self, tenor):        
@@ -49,7 +51,7 @@ class LinearRateModel:
         return zcb_price
         
     
-    def calibrate(self, optimizer_tol = 1e-10):
+    def calibrate(self, optimizer_tol = 1e-11):
         #Get calib instrument from model_data
         calib_instruments_names = self.model_data['CALIBINSTRUMENTS'][0]
         calib_instruments_rates = np.array(self.model_data['CALIBINSTRUMENTS'][1])
@@ -57,16 +59,18 @@ class LinearRateModel:
         
         #Create trades from calib instruments
         for trades_string in calib_instruments_names:
-            calib_instruments.append(TradePayments.create_trade_from_string(trades_string))
-        
+            tmp_trade = TradePayments.create_trade_from_string(trades_string)
+            tmp_trade.insert_variables()
+            calib_instruments.append(tmp_trade)
+            
         #Find model parameter dates and set initial paramter values
         model_parameter_dates = [instr.information['LASTFIXTIME'] for instr in calib_instruments]
         model_parameter_values = np.zeros(len(model_parameter_dates))
-        self.parameters['SPOTRATES'] = np.column_stack((model_parameter_dates,model_parameter_values))
+        self.parameters['FORWARDRATES'] = np.column_stack((model_parameter_dates,model_parameter_values))
         
         #define loss function and bounds
         def loss_function(parameter_values):
-            self.parameters['SPOTRATES'] = np.column_stack((model_parameter_dates,parameter_values))
+            self.parameters['FORWARDRATES'] = np.column_stack((model_parameter_dates,parameter_values))
             model_rates = np.array([get_trade_rate(instr, self) for instr in calib_instruments])
             loss = np.mean(np.square(model_rates - calib_instruments_rates))
             return loss
@@ -74,7 +78,7 @@ class LinearRateModel:
         bounds = [(-0.1,0.2) for _ in model_parameter_dates]
         
         #optimize
-        result = minimize(loss_function, model_parameter_values ,bounds=bounds, tol=1e-12)
+        result = minimize(loss_function, model_parameter_values ,bounds=bounds, tol=optimizer_tol)
         
         return result
 
@@ -140,6 +144,23 @@ def get_trade_rate(TradePayments, Model):
         trade_rate = 'ERROR'
         
     return trade_rate
+
+def get_trade_value_deriv(TradePayments, Model, leg = None, bumps_size = 1e-4):
+    trade_pv = get_trade_value(TradePayments, Model, leg)
+    
+    derivs = []
+    original_parameters = copy.deepcopy(Model.parameters['FORWARDRATES'])
+    
+    for paramter_idx in range(len(Model.parameters['FORWARDRATES'])):
+        Model.parameters['FORWARDRATES'][paramter_idx,1] += bumps_size
+        
+        new_trade_pv = get_trade_value(TradePayments, Model, leg)
+        tmp_deriv = (new_trade_pv - trade_pv) / bumps_size
+        derivs.append(tmp_deriv)
+        
+        Model.parameters['FORWARDRATES'] = copy.deepcopy(original_parameters)
+    
+    return np.array(derivs)
 
 if __name__ == '__main__':
     model = LinearRateModel()

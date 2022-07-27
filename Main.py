@@ -5,9 +5,6 @@ Created on Fri Jul 22 22:11:17 2022
 @author: mrgna
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-
 import LinearRateModel
 import TradePayments
 
@@ -33,32 +30,11 @@ if __name__ == '__main__':
     model.plot_model(0,30,'ZCBRATES',200)
     model.plot_model(0,30,'ZCBPRICES',200)
     
-    xs = np.linspace(0,30,200)
-    ys = [model.get_forward_rate(x) for x in xs]
-    plt.plot(xs,ys)
-    plt.xlabel('Time')
-    plt.title('Forward rates')
-    plt.show()
-    
-    #plot zero rates
-    xs = np.linspace(0,30,200)
-    ys = [model.get_zcb_rate(x) for x in xs]
-    plt.plot(xs,ys)
-    plt.xlabel('Time')
-    plt.title('ZCB Rates')
-    plt.show()
-    
-    #plot zero prices
-    xs = np.linspace(0,30,200)
-    ys = [model.get_zcb_price(x) for x in xs]
-    plt.plot(xs,ys)
-    plt.xlabel('Time')
-    plt.title('ZCB Curve')
-    plt.show()
-    
     #Price some trades in the model
     trades = [TradePayments.create_trade_from_string(s) for s in ["FRA 18M 0.02386",'SWAP 0B 3Y 0.02019']]
     for trade in trades:
         trade.print_trade()
     trades_pv = [LinearRateModel.get_trade_value(trade,model) for trade in trades]
     trades_rate = [LinearRateModel.get_trade_rate(trade,model) for trade in trades]
+    trade_deriv = LinearRateModel.get_trade_value_deriv(trades[1],model)
+    
