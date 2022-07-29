@@ -6,6 +6,7 @@ Created on Sat Jul 16 23:20:03 2022
 """
 
 import numpy as np
+import pandas as pd
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
 import copy
@@ -44,7 +45,6 @@ class LinearRateModel:
         #Get zcb prices for time tenor % forward_coverage_year to tenor
         forward_rate_points = np.arange(tenor-forward_coverage_year,-0.001,-forward_coverage_year)
         zcb_partial_prices = [1/(1+forward_coverage_year*self.get_forward_rate(time)) for time in forward_rate_points]
-        
         #Calculate zcb price from 0 to tenor
         zcb_price = zcb_price_stump * np.product(zcb_partial_prices)
         
@@ -103,6 +103,7 @@ class LinearRateModel:
         plt.title(plot_title)
         plt.show()
 
+
 def get_trade_value(TradePayments, Model, leg = None):
     trade_pv = 0.0
     
@@ -131,39 +132,85 @@ def get_trade_value(TradePayments, Model, leg = None):
         
     return trade_pv
 
-def get_trade_rate(TradePayments, Model):
-    tradetype = TradePayments.information['TRADETYPE']
+
+def get_trade_rate(Trade, Model):
+    tradetype = Trade.information['TRADETYPE']
     
     if tradetype == 'SWAP':
-        pv_fixed_leg = get_trade_value(TradePayments,Model,0)
-        pv_float_leg = get_trade_value(TradePayments,Model,1)
-        trade_rate = - pv_float_leg / pv_fixed_leg * float(TradePayments.variables['FIXEDRATE'])
+        pv_fixed_leg = get_trade_value(Trade,Model,0)
+        pv_float_leg = get_trade_value(Trade,Model,1)
+        trade_rate = - pv_float_leg / pv_fixed_leg * float(Trade.variables['FIXEDRATE'])
     elif tradetype == 'FRA':
-        trade_rate = Model.get_forward_rate(TradePayments.payments[0].fixtime)
+        trade_rate = Model.get_forward_rate(Trade.payments[0].fixtime)
     else:
         trade_rate = 'ERROR'
         
     return trade_rate
 
-def get_trade_value_deriv(TradePayments, Model, leg = None, bumps_size = 1e-4):
-    trade_pv = get_trade_value(TradePayments, Model, leg)
+
+def get_trade_deltavector(trades, Model, deriv_type = 'VALUE', leg = None, bump_size = 1e-4):
+    if type(trades) is not list:
+        trades = [trades]
+    
+    #set eval func for trade. Either rate or value
+    deriv_type = deriv_type.upper()
+    if deriv_type == 'VALUE':
+        trade_eval = lambda trade, leg: get_trade_value(trade, Model, leg)
+    elif deriv_type.upper() == 'RATE':
+        trade_eval = lambda trade, leg: get_trade_rate(trade, Model)
+    else:
+        return "ERROR"
+    
+    #Get pv of trades
+    trade_pv = np.array([trade_eval(trade, leg) for trade in trades])
     
     derivs = []
     original_parameters = copy.deepcopy(Model.parameters['FORWARDRATES'])
     
     for paramter_idx in range(len(Model.parameters['FORWARDRATES'])):
-        Model.parameters['FORWARDRATES'][paramter_idx,1] += bumps_size
+        Model.parameters['FORWARDRATES'][paramter_idx,1] += bump_size
         
-        new_trade_pv = get_trade_value(TradePayments, Model, leg)
-        tmp_deriv = (new_trade_pv - trade_pv) / bumps_size
+        new_trade_pv = np.array([trade_eval(trade, leg) for trade in trades])
+        tmp_deriv = (new_trade_pv - trade_pv)
         derivs.append(tmp_deriv)
         
         Model.parameters['FORWARDRATES'] = copy.deepcopy(original_parameters)
     
-    return np.array(derivs)
+    derivs = np.stack(derivs,axis=0)
+    
+    return derivs
+    
+    
+def get_trade_risk(trades, risk_instruments, Model, leg = None, bump_size=1e-4,return_pandas = False):
+    if type(trades) is not list:
+        trades = [trades]
+    
+    #Get parameter derivatives for TradePayments
+    trade_derivs = get_trade_deltavector(trades, Model, 'VALUE', leg, bump_size) / bump_size
+
+    #create trades for risk instruments:
+    risk_trades = []
+    for trades_string in risk_instruments:
+        tmp_trade = TradePayments.create_trade_from_string(trades_string)
+        tmp_trade.insert_variables()
+        risk_trades.append(tmp_trade)        
+
+    #Get parameter derivatives for risk_instruments
+    risk_instruments_derivs = get_trade_deltavector(risk_trades, Model, 'RATE', None, bump_size) / bump_size
+    
+    #Calculate pseudo inverse of risk_instruments_derivs
+    risk_derivs_inverse = np.linalg.pinv(risk_instruments_derivs)
+    
+    #Get risk
+    trade_risk = (risk_derivs_inverse @ trade_derivs) * bump_size
+    
+    if return_pandas:
+        return pd.DataFrame(np.round(trade_risk,8),index = [trade.information['TRADESTRING'] for trade in risk_trades], 
+                            columns=[trade.information['TRADESTRING'] for trade in trades])
+    else: #standard
+        return trade_risk
 
 if __name__ == '__main__':
     model = LinearRateModel()
-    model.get_zcb_price(0.499)
-    model.get_zcb_rate(0.499)
+    model.get_zcb_price(0.51)
     

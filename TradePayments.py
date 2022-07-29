@@ -17,7 +17,7 @@ class TradePayments():
     def __init__(self, tradetype,last_fixtime=None):
         self.payments = []
         self.variables = {}
-        self.information = {'TRADETYPE':tradetype,'LASTFIXTIME':last_fixtime}
+        self.information = {'TRADETYPE':tradetype,'LASTFIXTIME':last_fixtime,'TRADESTRING':None}
     
     def add_payment(self, paytime, payment, fixtime=None,indextenor='6M',leg=0):
         self.payments.append(TradePayment(paytime,payment,fixtime,leg))    
@@ -96,6 +96,7 @@ def create_swap_payments(starttime, tenor, fixed_rate, indextenor='6M', notional
     
 #Create Trade from string
 def create_trade_from_string(trade_string):
+    trade_string = trade_string.upper()
     trade_string_split = trade_string.upper().split(' ')
     
     tradetype = trade_string_split[0]
@@ -117,8 +118,12 @@ def create_trade_from_string(trade_string):
             fixed_rate = 1
         
         trade = create_fra_payments(starttime,fixed_rate)
+        
     else:
         trade = 'ERROR'
+    
+    if type(trade) is not str:
+        trade.information['TRADESTRING'] = trade_string
     
     return trade
     
